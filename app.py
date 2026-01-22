@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
 import pandas as pd
 import warnings
+from PIL import Image # เพิ่ม library สำหรับจัดการรูปภาพ
 
 # ปิดข้อความแจ้งเตือนที่ไม่จำเป็น
 warnings.filterwarnings("ignore")
@@ -11,10 +12,10 @@ warnings.filterwarnings("ignore")
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(page_title="General Shear Assessment", layout="wide")
 
-st.title("🏗️ Structural Shear Strength Assessment (Interactive Table)")
+st.title("🏗️ Structural Shear Strength Assessment")
 st.markdown("""
 **Method:** Sigma-x Analysis (Analytical Model)  
-*Flexible tool with interactive table for experimental data comparison.*
+*Flexible tool with interactive table and section image display.*
 """)
 
 # ==========================================
@@ -58,14 +59,13 @@ with st.sidebar:
         else:
             h_av, av, x_cr1, x_cr2 = 0, 1, 0, 0 
 
-    # --- 5. Experimental Data (แบบตาราง Interactive) ---
+    # --- 5. Experimental Data (Table) ---
     with st.expander("5. Experimental Data (Table)", expanded=True):
-        st.write("📝 **กรอกข้อมูลผลการทดลอง:**")
-        st.caption("ใส่ค่า 'Degradation / Loss (%)' ได้เลย (ไม่ต้องลบจาก 100)")
+        st.write("📝 **Experimental Data:**")
+        st.caption("Input 'Degradation / Loss (%)' directly.")
         
-        # สร้างข้อมูลตั้งต้น (เปลี่ยนชื่อคอลัมน์ให้ตรงความหมายใหม่)
         default_data = pd.DataFrame([
-            {"Width (mm)": 0.05, "Loss (%)": 28.6}, # แก้ตัวเลขตัวอย่างให้สมเหตุสมผลกับ Loss (100-71.4)
+            {"Width (mm)": 0.05, "Loss (%)": 28.6},
             {"Width (mm)": 0.23, "Loss (%)": 34.3},
             {"Width (mm)": 0.48, "Loss (%)": 45.8},
             {"Width (mm)": 0.79, "Loss (%)": 57.2},
@@ -75,14 +75,13 @@ with st.sidebar:
             {"Width (mm)": 2.03, "Loss (%)": 91.5},
         ])
         
-        # สร้างตารางที่แก้ไขได้ (Data Editor)
-        edited_df = st.data_editor(
-            default_data, 
-            num_rows="dynamic", 
-            hide_index=True
-        )
-        
+        edited_df = st.data_editor(default_data, num_rows="dynamic", hide_index=True)
         plot_exp = st.checkbox("Plot Experimental Data", value=True)
+
+    # --- 6. Section Image Upload (NEW!) ---
+    with st.expander("6. Cross-Section Image", expanded=True):
+        st.write("📷 **Upload Section Drawing:**")
+        uploaded_file = st.file_uploader("Choose an image...", type=['png', 'jpg', 'jpeg'])
 
 # Pack variables
 props = {'fc_prime': fc_prime, 'Ec': Ec, 'Es': Es, 'rho_l': rho_l, 'rho_v': rho_v, 'rho_h': rho_h, 'fy_l': fy_l, 'fy_v': fy_v, 'fy_h': fy_h}
@@ -109,110 +108,4 @@ def obj_func(x, eps_1, props, theta_deg, geom):
     
     ratio = eps_2 / (beta_d * -0.002)
     fc2 = 0 if ratio < 0 else -beta_d * props['fc_prime'] * (2*ratio - ratio**2)
-    vci = 0 if (eps_1**2 + gam_cr**2)==0 else 3.83*(props['fc_prime']**(1/3))*(gam_cr**2/(eps_1**2+gam_cr**2))
-    
-    def fs(e, fy): return max(min(e*props['Es'], fy), -fy)
-    
-    sig_x = fc1*s2 + fc2*c2 - 2*vci*sc + props['rho_l']*fs(eps_x,props['fy_l']) + props['rho_h']*fs(eps_x,props['fy_h'])
-    sig_y = fc1*c2 + fc2*s2 + 2*vci*sc + props['rho_v']*fs(eps_y,props['fy_v'])
-    tau = (fc1-fc2)*sc + vci*(s2-c2)
-    
-    if geom['use_clamping']:
-        c1, c2 = 1417, 1394
-        t1 = 2.5/(0.6+4*(geom['x_cr1']/c1))-0.5
-        t2 = 2.5/(0.6+4*(geom['x_cr2']/c2))-0.5
-        tgt = -0.5*(geom['h_av']/geom['av'])*(t1+t2)
-        cur = 0 if abs(tau)<1e-4 else sig_y/tau
-        return [sig_x, cur-tgt]
-    else:
-        return [sig_x, sig_y]
-
-# ==========================================
-# 3. MAIN EXECUTION
-# ==========================================
-if st.button("🚀 Run Analysis", type="primary"):
-    
-    # --- A. Parse Data from Table ---
-    w_exp, loss_exp = [], []
-    has_exp_data = False
-    
-    if plot_exp and not edited_df.empty:
-        try:
-            # ดึงข้อมูลจากตาราง (DataFrame)
-            w_exp = edited_df["Width (mm)"].tolist()
-            # ใช้ค่าจากตารางโดยตรง ไม่ต้องเอา 100 ไปลบแล้ว
-            loss_exp = edited_df["Loss (%)"].tolist() 
-            has_exp_data = True
-        except Exception as e:
-            st.error(f"Error reading table data: {e}")
-
-    # --- B. Run Simulation ---
-    w_range = np.linspace(0.05, 2.50, 50)
-    tau_model = []
-    curr = [-0.0001, 0.0002]
-    
-    progress_bar = st.progress(0)
-    
-    for i, w in enumerate(w_range):
-        func = lambda x: obj_func(x, w/s_cr, props, theta_deg, geom)
-        sol, _, ier, _ = fsolve(func, curr, full_output=True)
-        
-        if ier == 1:
-            eps_2, gam_cr = sol[0], sol[1]
-            th=np.deg2rad(theta_deg); s,c=np.sin(th),np.cos(th); s2,c2,sc=s**2,c**2,s*c
-            fc1 = (0.33*np.sqrt(props['fc_prime']))/(1+np.sqrt(633*(w/s_cr))); fc1=min(fc1,4.2)
-            term=(-(w/s_cr)/(sol[0] if sol[0]!=0 else 1e-9))-0.28
-            bd=1.0 if term<0 else 1/(1+0.27*(term**0.8))
-            if bd>1: bd=1.0
-            r=sol[0]/(bd*-0.002); fc2=0 if r<0 else -bd*props['fc_prime']*(2*r-r**2)
-            vci=3.83*(props['fc_prime']**(1/3))*(sol[1]**2/((w/s_cr)**2+sol[1]**2))
-            tau=(fc1-fc2)*sc+vci*(s2-c2)
-            
-            tau_model.append(tau)
-            curr = sol
-        else:
-            tau_model.append(np.nan)
-        progress_bar.progress((i+1)/len(w_range))
-    
-    # Process Results
-    tau_model = np.array(tau_model)
-    tau_u = np.nanmax(tau_model)
-    degradation = (1 - (tau_model/tau_u))*100
-    
-    # --- C. Plotting ---
-    st.divider()
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        
-        # 1. Model Curve
-        ax.plot(w_range, degradation, color='#d62728', linewidth=3, label='Analytical Model')
-        
-        # 2. Experimental Data
-        if has_exp_data:
-            ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data (Loss)')
-        
-        ax.set_xlabel('Max Diagonal Crack Width, w_cr (mm)', fontweight='bold')
-        ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold')
-        ax.set_title(f'Shear Degradation Curve', fontsize=14)
-        ax.set_xlim(0, 2.5)
-        ax.set_ylim(0, 100)
-        ax.grid(True, linestyle='--', alpha=0.5)
-        ax.legend()
-        
-        st.pyplot(fig)
-        
-    with col2:
-        st.subheader("📊 Result Summary")
-        st.metric("Max Shear Strength (Tau_u)", f"{tau_u:.2f} MPa")
-        
-        if has_exp_data:
-            st.success("✅ User Data Loaded")
-            with st.expander("ตรวจสอบข้อมูล (Data View)"):
-                st.dataframe(edited_df, hide_index=True)
-        else:
-            st.info("No experimental data plotted.")
-
-else:
-    st.info("👈 Adjust parameters and click **Run Analysis**")
+    vci = 0 if (eps_1**2 + gam_cr**
