@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import fsolve
 import pandas as pd
 import warnings
-from PIL import Image # เพิ่ม library สำหรับจัดการรูปภาพ
+from PIL import Image
 
 # ปิดข้อความแจ้งเตือนที่ไม่จำเป็น
 warnings.filterwarnings("ignore")
@@ -15,7 +15,7 @@ st.set_page_config(page_title="General Shear Assessment", layout="wide")
 st.title("🏗️ Structural Shear Strength Assessment")
 st.markdown("""
 **Method:** Sigma-x Analysis (Analytical Model)  
-*Flexible tool with interactive table and section image display.*
+*High-resolution analysis (step 0.001 mm) with interactive tools.*
 """)
 
 # ==========================================
@@ -47,6 +47,8 @@ with st.sidebar:
     with st.expander("3. Crack & Geometry", expanded=True):
         theta_deg = st.number_input("Crack Angle (deg)", value=46.0)
         s_cr = st.number_input("Crack Spacing (mm)", value=268.0)
+        # เพิ่ม Input สำหรับกำหนดขอบเขตการวิเคราะห์
+        max_w_analysis = st.number_input("Max Analysis Width (mm)", value=2.5, step=0.1, help="ค่า xxxx ที่ต้องการวิเคราะห์ถึง")
 
     # --- 4. Boundary Conditions ---
     with st.expander("4. Boundary Conditions", expanded=False):
@@ -78,7 +80,7 @@ with st.sidebar:
         edited_df = st.data_editor(default_data, num_rows="dynamic", hide_index=True)
         plot_exp = st.checkbox("Plot Experimental Data", value=True)
 
-    # --- 6. Section Image Upload (NEW!) ---
+    # --- 6. Section Image Upload ---
     with st.expander("6. Cross-Section Image", expanded=True):
         st.write("📷 **Upload Section Drawing:**")
         uploaded_file = st.file_uploader("Choose an image...", type=['png', 'jpg', 'jpeg'])
@@ -108,6 +110,7 @@ def obj_func(x, eps_1, props, theta_deg, geom):
     
     ratio = eps_2 / (beta_d * -0.002)
     fc2 = 0 if ratio < 0 else -beta_d * props['fc_prime'] * (2*ratio - ratio**2)
+    
     vci = 0 if (eps_1**2 + gam_cr**2)==0 else 3.83*(props['fc_prime']**(1/3))*(gam_cr**2/(eps_1**2+gam_cr**2))
     
     def fs(e, fy): return max(min(e*props['Es'], fy), -fy)
@@ -143,12 +146,17 @@ if st.button("🚀 Run Analysis", type="primary"):
         except Exception as e:
             st.error(f"Error reading table data: {e}")
 
-    # --- B. Run Simulation ---
-    w_range = np.linspace(0.05, 2.50, 50)
+    # --- B. Run Simulation (UPDATED RANGE) ---
+    # เปลี่ยน Range เป็น w = 0.001 : 0.001 : max_w_analysis
+    w_range = np.arange(0.001, max_w_analysis, 0.001)
+    
     tau_model = []
     curr = [-0.0001, 0.0002]
     
+    # Progress bar setup
     progress_bar = st.progress(0)
+    status_text = st.empty()
+    total_steps = len(w_range)
     
     for i, w in enumerate(w_range):
         func = lambda x: obj_func(x, w/s_cr, props, theta_deg, geom)
@@ -169,7 +177,13 @@ if st.button("🚀 Run Analysis", type="primary"):
             curr = sol
         else:
             tau_model.append(np.nan)
-        progress_bar.progress((i+1)/len(w_range))
+        
+        # Update progress bar every 5% to save UI rendering time
+        if i % (total_steps // 20) == 0:
+            progress_bar.progress((i+1)/total_steps)
+    
+    progress_bar.progress(100)
+    status_text.text("Calculation Complete!")
     
     # Process Results
     tau_model = np.array(tau_model)
@@ -183,14 +197,14 @@ if st.button("🚀 Run Analysis", type="primary"):
     with col1:
         # Plot Graph
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(w_range, degradation, color='#d62728', linewidth=3, label='Analytical Model')
+        ax.plot(w_range, degradation, color='#d62728', linewidth=2, label='Analytical Model')
         if has_exp_data:
             ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data (Loss)')
         
         ax.set_xlabel('Max Diagonal Crack Width, w_cr (mm)', fontweight='bold')
         ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold')
         ax.set_title(f'Shear Degradation Curve', fontsize=14)
-        ax.set_xlim(0, 2.5)
+        ax.set_xlim(0, max_w_analysis) # ปรับแกน X ตาม Max ที่เลือก
         ax.set_ylim(0, 100)
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.legend()
@@ -199,12 +213,12 @@ if st.button("🚀 Run Analysis", type="primary"):
     with col2:
         st.subheader("📊 Result Summary")
         st.metric("Max Shear Strength (Tau_u)", f"{tau_u:.2f} MPa")
+        st.metric("Calculation Points", f"{len(w_range)} steps")
         
         # --- DISPLAY UPLOADED IMAGE HERE ---
         if uploaded_file is not None:
             st.write("---")
             st.markdown("**Cross-Section View:**")
-            # แสดงรูปภาพที่อัปโหลด
             image = Image.open(uploaded_file)
             st.image(image, caption="Uploaded Section", use_container_width=True)
         else:
