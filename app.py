@@ -15,7 +15,7 @@ st.set_page_config(page_title="General Shear Assessment", layout="wide")
 st.title("🏗️ Structural Shear Strength Assessment")
 st.markdown("""
 **Method:** Sigma-x Analysis (Analytical Model)  
-*High-resolution analysis with customizable Crack Width range.*
+*Enhanced Crack Spacing Calculation & High-Resolution Analysis.*
 """)
 
 # ==========================================
@@ -43,18 +43,44 @@ with st.sidebar:
         fy_v = col_fy2.number_input("fy_v (MPa)", value=435.0)
         fy_h = col_fy1.number_input("fy_h (MPa)", value=435.0)
 
-    # --- 3. Crack & Geometry (แก้ไขใหม่: เพิ่มการกำหนดช่วง w) ---
+    # --- 3. Crack & Geometry (UPDATED: Added Scr Calculator) ---
     with st.expander("3. Crack & Geometry", expanded=True):
-        col_geom1, col_geom2 = st.columns(2)
-        theta_deg = col_geom1.number_input("Crack Angle (deg)", value=46.0)
-        s_cr = col_geom2.number_input("Crack Spacing (mm)", value=268.0)
+        st.markdown("### A. Crack Angle")
+        theta_deg = st.number_input("Crack Angle (deg)", value=46.0)
         
         st.markdown("---")
-        st.markdown("**Analysis Range (Crack Width):**")
+        st.markdown("### B. Crack Spacing ($s_{cr}$)")
+        
+        # เลือกวิธีการหาค่า Scr
+        scr_method = st.radio(
+            "Select Input Method:", 
+            ["Manual Input (Measured)", "Calculate from Rebar (MCFT)"],
+            horizontal=True
+        )
+        
+        if scr_method == "Manual Input (Measured)":
+            s_cr = st.number_input("Crack Spacing (mm)", value=268.0, help="ระยะห่างรอยร้าวเฉลี่ยที่วัดได้จริง")
+        else:
+            st.caption("Calculate based on reinforcement spacing:")
+            col_rebar1, col_rebar2 = st.columns(2)
+            s_mx = col_rebar1.number_input("Longit. Spacing (mm)", value=300.0, help="ระยะห่างเหล็กแกน (แนวนอน)")
+            s_my = col_rebar2.number_input("Stirrup Spacing (mm)", value=200.0, help="ระยะห่างเหล็กปลอก (แนวตั้ง)")
+            
+            # คำนวณอัตโนมัติ
+            th_rad = np.deg2rad(theta_deg)
+            term_x = np.abs(np.sin(th_rad)) / (s_mx if s_mx > 0 else 1e9)
+            term_y = np.abs(np.cos(th_rad)) / (s_my if s_my > 0 else 1e9)
+            s_cr_calc = 1 / (term_x + term_y)
+            
+            st.info(f"📍 Calculated $s_{{cr}}$ = **{s_cr_calc:.1f} mm**")
+            s_cr = s_cr_calc
+
+        st.markdown("---")
+        st.markdown("### C. Analysis Range (Crack Width)")
         col_w1, col_w2, col_w3 = st.columns(3)
-        w_start = col_w1.number_input("Start (mm)", value=0.001, format="%.3f", help="ค่าเริ่มต้น (w)")
-        w_end = col_w2.number_input("End (mm)", value=2.500, format="%.3f", help="ค่าสุดท้าย (Max w)")
-        w_step = col_w3.number_input("Step (mm)", value=0.005, format="%.3f", help="ความละเอียด (Step)")
+        w_start = col_w1.number_input("Start (mm)", value=0.001, format="%.3f")
+        w_end = col_w2.number_input("End (mm)", value=2.500, format="%.3f")
+        w_step = col_w3.number_input("Step (mm)", value=0.005, format="%.3f")
 
     # --- 4. Boundary Conditions ---
     with st.expander("4. Boundary Conditions", expanded=False):
@@ -152,9 +178,7 @@ if st.button("🚀 Run Analysis", type="primary"):
         except Exception as e:
             st.error(f"Error reading table data: {e}")
 
-    # --- B. Run Simulation (ใช้ค่า Start/End/Step จาก User) ---
-    # ใช้ค่า w_start, w_end, w_step ที่รับมาจาก Sidebar
-    # บวกเพิ่มเล็กน้อยที่ End เพื่อให้ Python นับรวมตัวสุดท้ายด้วย
+    # --- B. Run Simulation ---
     w_range = np.arange(w_start, w_end + (w_step/100), w_step)
     
     tau_model = []
@@ -184,7 +208,6 @@ if st.button("🚀 Run Analysis", type="primary"):
         else:
             tau_model.append(np.nan)
         
-        # Update progress bar
         if i % (max(1, total_steps // 20)) == 0:
             progress_bar.progress((i+1)/total_steps)
     
@@ -203,7 +226,7 @@ if st.button("🚀 Run Analysis", type="primary"):
     with col1:
         # Plot Graph
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(w_range, degradation, color='#d62728', linewidth=2, label='Analytical Model')
+        ax.plot(w_range, degradation, color='#d62728', linewidth=2, label=f'Model (Scr={s_cr:.1f}mm)')
         if has_exp_data:
             ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data (Loss)')
         
@@ -219,6 +242,7 @@ if st.button("🚀 Run Analysis", type="primary"):
     with col2:
         st.subheader("📊 Result Summary")
         st.metric("Max Shear Strength (Tau_u)", f"{tau_u:.2f} MPa")
+        st.metric("Crack Spacing Used", f"{s_cr:.1f} mm")
         st.metric("Analysis Points", f"{total_steps} steps")
         
         if uploaded_file is not None:
