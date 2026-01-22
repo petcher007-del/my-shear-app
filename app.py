@@ -32,7 +32,6 @@ with st.sidebar:
 
     # --- 2. Reinforcement ---
     with st.expander("2. Reinforcement", expanded=True):
-        # สร้างคอลัมน์ให้ถูกต้อง (FIXED ERROR HERE)
         col_rho1, col_rho2 = st.columns(2)
         rho_l = col_rho1.number_input("rho_l", value=0.0264, format="%.4f")
         rho_v = col_rho2.number_input("rho_v", value=0.0029, format="%.4f")
@@ -62,24 +61,24 @@ with st.sidebar:
     # --- 5. Experimental Data (แบบตาราง Interactive) ---
     with st.expander("5. Experimental Data (Table)", expanded=True):
         st.write("📝 **กรอกข้อมูลผลการทดลอง:**")
-        st.caption("ใส่ค่า 'กำลังที่เหลืออยู่' (Remaining Capacity) โปรแกรมจะแปลงเป็น %Loss ในกราฟให้เอง")
+        st.caption("ใส่ค่า 'Degradation / Loss (%)' ได้เลย (ไม่ต้องลบจาก 100)")
         
-        # สร้างข้อมูลตั้งต้น (ตัวอย่างจาก Paper)
+        # สร้างข้อมูลตั้งต้น (เปลี่ยนชื่อคอลัมน์ให้ตรงความหมายใหม่)
         default_data = pd.DataFrame([
-            {"Width (mm)": 0.05, "Capacity (%)": 71.4},
-            {"Width (mm)": 0.23, "Capacity (%)": 65.7},
-            {"Width (mm)": 0.48, "Capacity (%)": 54.2},
-            {"Width (mm)": 0.79, "Capacity (%)": 42.8},
-            {"Width (mm)": 1.08, "Capacity (%)": 31.4},
-            {"Width (mm)": 1.27, "Capacity (%)": 19.9},
-            {"Width (mm)": 1.71, "Capacity (%)": 12.5},
-            {"Width (mm)": 2.03, "Capacity (%)": 8.5},
+            {"Width (mm)": 0.05, "Loss (%)": 28.6}, # แก้ตัวเลขตัวอย่างให้สมเหตุสมผลกับ Loss (100-71.4)
+            {"Width (mm)": 0.23, "Loss (%)": 34.3},
+            {"Width (mm)": 0.48, "Loss (%)": 45.8},
+            {"Width (mm)": 0.79, "Loss (%)": 57.2},
+            {"Width (mm)": 1.08, "Loss (%)": 68.6},
+            {"Width (mm)": 1.27, "Loss (%)": 80.1},
+            {"Width (mm)": 1.71, "Loss (%)": 87.5},
+            {"Width (mm)": 2.03, "Loss (%)": 91.5},
         ])
         
         # สร้างตารางที่แก้ไขได้ (Data Editor)
         edited_df = st.data_editor(
             default_data, 
-            num_rows="dynamic", # อนุญาตให้เพิ่ม/ลบแถวได้
+            num_rows="dynamic", 
             hide_index=True
         )
         
@@ -141,11 +140,8 @@ if st.button("🚀 Run Analysis", type="primary"):
         try:
             # ดึงข้อมูลจากตาราง (DataFrame)
             w_exp = edited_df["Width (mm)"].tolist()
-            cap_vals = edited_df["Capacity (%)"].tolist()
-            
-            # แปลง Remaining Capacity -> Loss (Degradation)
-            # Loss = 100 - Remaining Capacity
-            loss_exp = [100 - c for c in cap_vals]
+            # ใช้ค่าจากตารางโดยตรง ไม่ต้องเอา 100 ไปลบแล้ว
+            loss_exp = edited_df["Loss (%)"].tolist() 
             has_exp_data = True
         except Exception as e:
             st.error(f"Error reading table data: {e}")
@@ -162,7 +158,6 @@ if st.button("🚀 Run Analysis", type="primary"):
         sol, _, ier, _ = fsolve(func, curr, full_output=True)
         
         if ier == 1:
-            # Recalculate Tau logic
             eps_2, gam_cr = sol[0], sol[1]
             th=np.deg2rad(theta_deg); s,c=np.sin(th),np.cos(th); s2,c2,sc=s**2,c**2,s*c
             fc1 = (0.33*np.sqrt(props['fc_prime']))/(1+np.sqrt(633*(w/s_cr))); fc1=min(fc1,4.2)
@@ -196,7 +191,7 @@ if st.button("🚀 Run Analysis", type="primary"):
         
         # 2. Experimental Data
         if has_exp_data:
-            ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data')
+            ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data (Loss)')
         
         ax.set_xlabel('Max Diagonal Crack Width, w_cr (mm)', fontweight='bold')
         ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold')
@@ -214,14 +209,8 @@ if st.button("🚀 Run Analysis", type="primary"):
         
         if has_exp_data:
             st.success("✅ User Data Loaded")
-            with st.expander("ตรวจสอบข้อมูลที่พล็อต (Calculated Loss)"):
-                # แสดงตารางผลลัพธ์ที่แปลงค่าแล้วให้ User ดู
-                df_res = pd.DataFrame({
-                    'Width (mm)': w_exp,
-                    'Input Capacity (%)': edited_df["Capacity (%)"].tolist(),
-                    'Calculated Loss (%)': loss_exp
-                })
-                st.dataframe(df_res, hide_index=True)
+            with st.expander("ตรวจสอบข้อมูล (Data View)"):
+                st.dataframe(edited_df, hide_index=True)
         else:
             st.info("No experimental data plotted.")
 
