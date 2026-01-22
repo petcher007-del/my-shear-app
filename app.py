@@ -108,4 +108,111 @@ def obj_func(x, eps_1, props, theta_deg, geom):
     
     ratio = eps_2 / (beta_d * -0.002)
     fc2 = 0 if ratio < 0 else -beta_d * props['fc_prime'] * (2*ratio - ratio**2)
-    vci = 0 if (eps_1**2 + gam_cr**
+    vci = 0 if (eps_1**2 + gam_cr**2)==0 else 3.83*(props['fc_prime']**(1/3))*(gam_cr**2/(eps_1**2+gam_cr**2))
+    
+    def fs(e, fy): return max(min(e*props['Es'], fy), -fy)
+    
+    sig_x = fc1*s2 + fc2*c2 - 2*vci*sc + props['rho_l']*fs(eps_x,props['fy_l']) + props['rho_h']*fs(eps_x,props['fy_h'])
+    sig_y = fc1*c2 + fc2*s2 + 2*vci*sc + props['rho_v']*fs(eps_y,props['fy_v'])
+    tau = (fc1-fc2)*sc + vci*(s2-c2)
+    
+    if geom['use_clamping']:
+        c1, c2 = 1417, 1394
+        t1 = 2.5/(0.6+4*(geom['x_cr1']/c1))-0.5
+        t2 = 2.5/(0.6+4*(geom['x_cr2']/c2))-0.5
+        tgt = -0.5*(geom['h_av']/geom['av'])*(t1+t2)
+        cur = 0 if abs(tau)<1e-4 else sig_y/tau
+        return [sig_x, cur-tgt]
+    else:
+        return [sig_x, sig_y]
+
+# ==========================================
+# 3. MAIN EXECUTION
+# ==========================================
+if st.button("🚀 Run Analysis", type="primary"):
+    
+    # --- A. Parse Data from Table ---
+    w_exp, loss_exp = [], []
+    has_exp_data = False
+    
+    if plot_exp and not edited_df.empty:
+        try:
+            w_exp = edited_df["Width (mm)"].tolist()
+            loss_exp = edited_df["Loss (%)"].tolist() 
+            has_exp_data = True
+        except Exception as e:
+            st.error(f"Error reading table data: {e}")
+
+    # --- B. Run Simulation ---
+    w_range = np.linspace(0.05, 2.50, 50)
+    tau_model = []
+    curr = [-0.0001, 0.0002]
+    
+    progress_bar = st.progress(0)
+    
+    for i, w in enumerate(w_range):
+        func = lambda x: obj_func(x, w/s_cr, props, theta_deg, geom)
+        sol, _, ier, _ = fsolve(func, curr, full_output=True)
+        
+        if ier == 1:
+            eps_2, gam_cr = sol[0], sol[1]
+            th=np.deg2rad(theta_deg); s,c=np.sin(th),np.cos(th); s2,c2,sc=s**2,c**2,s*c
+            fc1 = (0.33*np.sqrt(props['fc_prime']))/(1+np.sqrt(633*(w/s_cr))); fc1=min(fc1,4.2)
+            term=(-(w/s_cr)/(sol[0] if sol[0]!=0 else 1e-9))-0.28
+            bd=1.0 if term<0 else 1/(1+0.27*(term**0.8))
+            if bd>1: bd=1.0
+            r=sol[0]/(bd*-0.002); fc2=0 if r<0 else -bd*props['fc_prime']*(2*r-r**2)
+            vci=3.83*(props['fc_prime']**(1/3))*(sol[1]**2/((w/s_cr)**2+sol[1]**2))
+            tau=(fc1-fc2)*sc+vci*(s2-c2)
+            
+            tau_model.append(tau)
+            curr = sol
+        else:
+            tau_model.append(np.nan)
+        progress_bar.progress((i+1)/len(w_range))
+    
+    # Process Results
+    tau_model = np.array(tau_model)
+    tau_u = np.nanmax(tau_model)
+    degradation = (1 - (tau_model/tau_u))*100
+    
+    # --- C. Plotting & Display ---
+    st.divider()
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Plot Graph
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(w_range, degradation, color='#d62728', linewidth=3, label='Analytical Model')
+        if has_exp_data:
+            ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data (Loss)')
+        
+        ax.set_xlabel('Max Diagonal Crack Width, w_cr (mm)', fontweight='bold')
+        ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold')
+        ax.set_title(f'Shear Degradation Curve', fontsize=14)
+        ax.set_xlim(0, 2.5)
+        ax.set_ylim(0, 100)
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.legend()
+        st.pyplot(fig)
+        
+    with col2:
+        st.subheader("📊 Result Summary")
+        st.metric("Max Shear Strength (Tau_u)", f"{tau_u:.2f} MPa")
+        
+        # --- DISPLAY UPLOADED IMAGE HERE ---
+        if uploaded_file is not None:
+            st.write("---")
+            st.markdown("**Cross-Section View:**")
+            # แสดงรูปภาพที่อัปโหลด
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Uploaded Section", use_container_width=True)
+        else:
+            st.info("No section image uploaded.")
+
+        if has_exp_data:
+            with st.expander("Data View"):
+                st.dataframe(edited_df, hide_index=True)
+
+else:
+    st.info("👈 Adjust parameters, (Optionally upload image), and click **Run Analysis**")
