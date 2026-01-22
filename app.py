@@ -32,8 +32,9 @@ with st.sidebar:
 
     # --- 2. Reinforcement ---
     with st.expander("2. Reinforcement", expanded=True):
-        col1, col2 = st.columns(2)
-        rho_l = col1.number_input("rho_l", value=0.0264, format="%.4f")
+        # สร้างคอลัมน์ให้ถูกต้อง (FIXED ERROR HERE)
+        col_rho1, col_rho2 = st.columns(2)
+        rho_l = col_rho1.number_input("rho_l", value=0.0264, format="%.4f")
         rho_v = col_rho2.number_input("rho_v", value=0.0029, format="%.4f")
         rho_h = col_rho1.number_input("rho_h", value=0.0029, format="%.4f")
         
