@@ -15,7 +15,7 @@ st.set_page_config(page_title="General Shear Assessment", layout="wide")
 st.title("🏗️ Structural Shear Strength Assessment")
 st.markdown("""
 **Method:** Sigma-x Analysis (Analytical Model)  
-*High-resolution analysis (step 0.001 mm) with interactive tools.*
+*High-resolution analysis with customizable Crack Width range.*
 """)
 
 # ==========================================
@@ -43,12 +43,18 @@ with st.sidebar:
         fy_v = col_fy2.number_input("fy_v (MPa)", value=435.0)
         fy_h = col_fy1.number_input("fy_h (MPa)", value=435.0)
 
-    # --- 3. Crack & Geometry ---
+    # --- 3. Crack & Geometry (แก้ไขใหม่: เพิ่มการกำหนดช่วง w) ---
     with st.expander("3. Crack & Geometry", expanded=True):
-        theta_deg = st.number_input("Crack Angle (deg)", value=46.0)
-        s_cr = st.number_input("Crack Spacing (mm)", value=268.0)
-        # เพิ่ม Input สำหรับกำหนดขอบเขตการวิเคราะห์
-        max_w_analysis = st.number_input("Max Analysis Width (mm)", value=2.5, step=0.1, help="ค่า xxxx ที่ต้องการวิเคราะห์ถึง")
+        col_geom1, col_geom2 = st.columns(2)
+        theta_deg = col_geom1.number_input("Crack Angle (deg)", value=46.0)
+        s_cr = col_geom2.number_input("Crack Spacing (mm)", value=268.0)
+        
+        st.markdown("---")
+        st.markdown("**Analysis Range (Crack Width):**")
+        col_w1, col_w2, col_w3 = st.columns(3)
+        w_start = col_w1.number_input("Start (mm)", value=0.001, format="%.3f", help="ค่าเริ่มต้น (w)")
+        w_end = col_w2.number_input("End (mm)", value=2.500, format="%.3f", help="ค่าสุดท้าย (Max w)")
+        w_step = col_w3.number_input("Step (mm)", value=0.005, format="%.3f", help="ความละเอียด (Step)")
 
     # --- 4. Boundary Conditions ---
     with st.expander("4. Boundary Conditions", expanded=False):
@@ -146,14 +152,14 @@ if st.button("🚀 Run Analysis", type="primary"):
         except Exception as e:
             st.error(f"Error reading table data: {e}")
 
-    # --- B. Run Simulation (UPDATED RANGE) ---
-    # เปลี่ยน Range เป็น w = 0.001 : 0.001 : max_w_analysis
-    w_range = np.arange(0.001, max_w_analysis, 0.001)
+    # --- B. Run Simulation (ใช้ค่า Start/End/Step จาก User) ---
+    # ใช้ค่า w_start, w_end, w_step ที่รับมาจาก Sidebar
+    # บวกเพิ่มเล็กน้อยที่ End เพื่อให้ Python นับรวมตัวสุดท้ายด้วย
+    w_range = np.arange(w_start, w_end + (w_step/100), w_step)
     
     tau_model = []
     curr = [-0.0001, 0.0002]
     
-    # Progress bar setup
     progress_bar = st.progress(0)
     status_text = st.empty()
     total_steps = len(w_range)
@@ -178,12 +184,12 @@ if st.button("🚀 Run Analysis", type="primary"):
         else:
             tau_model.append(np.nan)
         
-        # Update progress bar every 5% to save UI rendering time
-        if i % (total_steps // 20) == 0:
+        # Update progress bar
+        if i % (max(1, total_steps // 20)) == 0:
             progress_bar.progress((i+1)/total_steps)
     
     progress_bar.progress(100)
-    status_text.text("Calculation Complete!")
+    status_text.text(f"Calculation Complete! ({total_steps} points)")
     
     # Process Results
     tau_model = np.array(tau_model)
@@ -204,7 +210,7 @@ if st.button("🚀 Run Analysis", type="primary"):
         ax.set_xlabel('Max Diagonal Crack Width, w_cr (mm)', fontweight='bold')
         ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold')
         ax.set_title(f'Shear Degradation Curve', fontsize=14)
-        ax.set_xlim(0, max_w_analysis) # ปรับแกน X ตาม Max ที่เลือก
+        ax.set_xlim(0, w_end) 
         ax.set_ylim(0, 100)
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.legend()
@@ -213,9 +219,8 @@ if st.button("🚀 Run Analysis", type="primary"):
     with col2:
         st.subheader("📊 Result Summary")
         st.metric("Max Shear Strength (Tau_u)", f"{tau_u:.2f} MPa")
-        st.metric("Calculation Points", f"{len(w_range)} steps")
+        st.metric("Analysis Points", f"{total_steps} steps")
         
-        # --- DISPLAY UPLOADED IMAGE HERE ---
         if uploaded_file is not None:
             st.write("---")
             st.markdown("**Cross-Section View:**")
