@@ -5,8 +5,9 @@ from scipy.optimize import fsolve
 import pandas as pd
 import warnings
 from PIL import Image
+import matplotlib.cm as cm
 
-# ปิดข้อความแจ้งเตือนที่ไม่จำเป็น
+# ปิดข้อความแจ้งเตือน
 warnings.filterwarnings("ignore")
 
 # ตั้งค่าหน้าเว็บ
@@ -15,24 +16,24 @@ st.set_page_config(page_title="General Shear Assessment", layout="wide")
 st.title("🏗️ Structural Shear Strength Assessment")
 st.markdown("""
 **Method:** Sigma-x Analysis (Analytical Model)  
-*Enhanced Crack Spacing Calculation & High-Resolution Analysis.*
+*Analysis: Shear Strength vs. Crack Width (with Angle Sensitivity).*
 """)
 
 # ==========================================
-# 1. INPUTS (รับค่าตัวแปร)
+# 1. INPUTS
 # ==========================================
 with st.sidebar:
     st.header("⚙️ Model Parameters")
     
-    # --- 1. Material Properties ---
-    with st.expander("1. Material Properties", expanded=True):
+    # --- 1. Material ---
+    with st.expander("1. Material Properties", expanded=False):
         fc_prime = st.number_input("f'c (MPa)", value=31.5, step=0.5)
         default_Ec = 4700 * np.sqrt(fc_prime)
         Es = st.number_input("Es (MPa)", value=200000.0)
         Ec = default_Ec 
 
     # --- 2. Reinforcement ---
-    with st.expander("2. Reinforcement", expanded=True):
+    with st.expander("2. Reinforcement", expanded=False):
         col_rho1, col_rho2 = st.columns(2)
         rho_l = col_rho1.number_input("rho_l", value=0.0264, format="%.4f")
         rho_v = col_rho2.number_input("rho_v", value=0.0029, format="%.4f")
@@ -43,90 +44,60 @@ with st.sidebar:
         fy_v = col_fy2.number_input("fy_v (MPa)", value=435.0)
         fy_h = col_fy1.number_input("fy_h (MPa)", value=435.0)
 
-    # --- 3. Crack & Geometry (UPDATED: Added Scr Calculator) ---
+    # --- 3. Crack & Geometry ---
     with st.expander("3. Crack & Geometry", expanded=True):
-        st.markdown("### A. Crack Angle")
+        st.markdown("### A. Main Angle")
         theta_deg = st.number_input("Crack Angle (deg)", value=46.0)
+        
+        # === NEW FEATURE: Multi-Angle Comparison ===
+        st.markdown("---")
+        st.markdown("### 🔍 Sensitivity Analysis")
+        compare_angles = st.checkbox("Compare Multiple Angles?", value=True)
+        if compare_angles:
+            delta_deg = st.slider("Angle Variation (± deg)", 5, 20, 10, help="Plot lines for Main Angle ± this value")
         
         st.markdown("---")
         st.markdown("### B. Crack Spacing ($s_{cr}$)")
+        scr_method = st.radio("Method:", ["Manual Input", "Calculate from Rebar"], horizontal=True, label_visibility="collapsed")
         
-        # เลือกวิธีการหาค่า Scr
-        scr_method = st.radio(
-            "Select Input Method:", 
-            ["Manual Input (Measured)", "Calculate from Rebar (MCFT)"],
-            horizontal=True
-        )
-        
-        if scr_method == "Manual Input (Measured)":
-            s_cr = st.number_input("Crack Spacing (mm)", value=268.0, help="ระยะห่างรอยร้าวเฉลี่ยที่วัดได้จริง")
+        if scr_method == "Manual Input":
+            s_cr = st.number_input("Crack Spacing (mm)", value=268.0)
         else:
-            st.caption("Calculate based on reinforcement spacing:")
             col_rebar1, col_rebar2 = st.columns(2)
-            s_mx = col_rebar1.number_input("Longit. Spacing (mm)", value=300.0, help="ระยะห่างเหล็กแกน (แนวนอน)")
-            s_my = col_rebar2.number_input("Stirrup Spacing (mm)", value=200.0, help="ระยะห่างเหล็กปลอก (แนวตั้ง)")
-            
-            # คำนวณอัตโนมัติ
+            s_mx = col_rebar1.number_input("Sx (mm)", value=300.0)
+            s_my = col_rebar2.number_input("Sy (mm)", value=200.0)
             th_rad = np.deg2rad(theta_deg)
-            term_x = np.abs(np.sin(th_rad)) / (s_mx if s_mx > 0 else 1e9)
-            term_y = np.abs(np.cos(th_rad)) / (s_my if s_my > 0 else 1e9)
-            s_cr_calc = 1 / (term_x + term_y)
-            
-            st.info(f"📍 Calculated $s_{{cr}}$ = **{s_cr_calc:.1f} mm**")
+            s_cr_calc = 1 / ((np.abs(np.sin(th_rad))/(s_mx+1e-9)) + (np.abs(np.cos(th_rad))/(s_my+1e-9)))
+            st.caption(f"Calculated $s_{{cr}}$ (for {theta_deg}°): **{s_cr_calc:.1f} mm**")
             s_cr = s_cr_calc
 
         st.markdown("---")
-        st.markdown("### C. Analysis Range (Crack Width)")
-        col_w1, col_w2, col_w3 = st.columns(3)
-        w_start = col_w1.number_input("Start (mm)", value=0.001, format="%.3f")
-        w_end = col_w2.number_input("End (mm)", value=2.500, format="%.3f")
-        w_step = col_w3.number_input("Step (mm)", value=0.005, format="%.3f")
+        st.markdown("### C. Analysis Range")
+        w_end = st.number_input("Max Width (mm)", value=2.5)
+        w_step = st.number_input("Step Size (mm)", value=0.05)
 
-    # --- 4. Boundary Conditions ---
-    with st.expander("4. Boundary Conditions", expanded=False):
+    # --- 4. Boundary & Data ---
+    with st.expander("4. Boundary & Experimental Data", expanded=False):
         use_clamping = st.checkbox("Apply Clamping Forces?", value=True)
         if use_clamping:
-            h_av = st.number_input("h_av (mm)", value=1067.0)
-            av = st.number_input("av (mm)", value=1767.0)
-            x_cr1 = st.number_input("x_cr1 (mm)", value=681.0)
-            x_cr2 = st.number_input("x_cr2 (mm)", value=655.0)
+            h_av, av = 1067.0, 1767.0
+            x_cr1, x_cr2 = 681.0, 655.0
         else:
-            h_av, av, x_cr1, x_cr2 = 0, 1, 0, 0 
-
-    # --- 5. Experimental Data (Table) ---
-    with st.expander("5. Experimental Data (Table)", expanded=True):
-        st.write("📝 **Experimental Data:**")
-        st.caption("Input 'Degradation / Loss (%)' directly.")
-        
-        default_data = pd.DataFrame([
-            {"Width (mm)": 0.05, "Loss (%)": 28.6},
-            {"Width (mm)": 0.23, "Loss (%)": 34.3},
-            {"Width (mm)": 0.48, "Loss (%)": 45.8},
-            {"Width (mm)": 0.79, "Loss (%)": 57.2},
-            {"Width (mm)": 1.08, "Loss (%)": 68.6},
-            {"Width (mm)": 1.27, "Loss (%)": 80.1},
-            {"Width (mm)": 1.71, "Loss (%)": 87.5},
-            {"Width (mm)": 2.03, "Loss (%)": 91.5},
-        ])
-        
+            h_av, av, x_cr1, x_cr2 = 0, 1, 0, 0
+            
+        default_data = pd.DataFrame([{"Width": 0.05, "Loss": 28.6}, {"Width": 0.79, "Loss": 57.2}, {"Width": 2.03, "Loss": 91.5}])
         edited_df = st.data_editor(default_data, num_rows="dynamic", hide_index=True)
-        plot_exp = st.checkbox("Plot Experimental Data", value=True)
-
-    # --- 6. Section Image Upload ---
-    with st.expander("6. Cross-Section Image", expanded=True):
-        st.write("📷 **Upload Section Drawing:**")
-        uploaded_file = st.file_uploader("Choose an image...", type=['png', 'jpg', 'jpeg'])
 
 # Pack variables
 props = {'fc_prime': fc_prime, 'Ec': Ec, 'Es': Es, 'rho_l': rho_l, 'rho_v': rho_v, 'rho_h': rho_h, 'fy_l': fy_l, 'fy_v': fy_v, 'fy_h': fy_h}
 geom = {'h_av': h_av, 'av': av, 'x_cr1': x_cr1, 'x_cr2': x_cr2, 'use_clamping': use_clamping}
 
 # ==========================================
-# 2. SOLVER LOGIC
+# 2. SOLVER FUNCTION
 # ==========================================
-def obj_func(x, eps_1, props, theta_deg, geom):
+def obj_func(x, eps_1, props, theta_val, geom): # Added theta_val as argument
     eps_2, gam_cr = x[0], x[1]
-    th = np.deg2rad(theta_deg)
+    th = np.deg2rad(theta_val)
     s, c = np.sin(th), np.cos(th)
     s2, c2, sc = s**2, c**2, s*c
     
@@ -142,7 +113,6 @@ def obj_func(x, eps_1, props, theta_deg, geom):
     
     ratio = eps_2 / (beta_d * -0.002)
     fc2 = 0 if ratio < 0 else -beta_d * props['fc_prime'] * (2*ratio - ratio**2)
-    
     vci = 0 if (eps_1**2 + gam_cr**2)==0 else 3.83*(props['fc_prime']**(1/3))*(gam_cr**2/(eps_1**2+gam_cr**2))
     
     def fs(e, fy): return max(min(e*props['Es'], fy), -fy)
@@ -161,101 +131,125 @@ def obj_func(x, eps_1, props, theta_deg, geom):
     else:
         return [sig_x, sig_y]
 
-# ==========================================
-# 3. MAIN EXECUTION
-# ==========================================
-if st.button("🚀 Run Analysis", type="primary"):
-    
-    # --- A. Parse Data from Table ---
-    w_exp, loss_exp = [], []
-    has_exp_data = False
-    
-    if plot_exp and not edited_df.empty:
-        try:
-            w_exp = edited_df["Width (mm)"].tolist()
-            loss_exp = edited_df["Loss (%)"].tolist() 
-            has_exp_data = True
-        except Exception as e:
-            st.error(f"Error reading table data: {e}")
-
-    # --- B. Run Simulation ---
-    w_range = np.arange(w_start, w_end + (w_step/100), w_step)
-    
-    tau_model = []
+def run_simulation(angle_in, w_array, spacing):
+    res_tau = []
     curr = [-0.0001, 0.0002]
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    total_steps = len(w_range)
-    
-    for i, w in enumerate(w_range):
-        func = lambda x: obj_func(x, w/s_cr, props, theta_deg, geom)
+    for w in w_array:
+        # Pass the specific angle 'angle_in' to the objective function
+        func = lambda x: obj_func(x, w/spacing, props, angle_in, geom)
         sol, _, ier, _ = fsolve(func, curr, full_output=True)
-        
         if ier == 1:
-            eps_2, gam_cr = sol[0], sol[1]
-            th=np.deg2rad(theta_deg); s,c=np.sin(th),np.cos(th); s2,c2,sc=s**2,c**2,s*c
-            fc1 = (0.33*np.sqrt(props['fc_prime']))/(1+np.sqrt(633*(w/s_cr))); fc1=min(fc1,4.2)
-            term=(-(w/s_cr)/(sol[0] if sol[0]!=0 else 1e-9))-0.28
+            # Re-calculate Tau for result
+            # (Repeating logic for display)
+            th=np.deg2rad(angle_in); s,c=np.sin(th),np.cos(th); s2,c2,sc=s**2,c**2,s*c
+            fc1 = (0.33*np.sqrt(props['fc_prime']))/(1+np.sqrt(633*(w/spacing))); fc1=min(fc1,4.2)
+            term=(-(w/spacing)/(sol[0] if sol[0]!=0 else 1e-9))-0.28
             bd=1.0 if term<0 else 1/(1+0.27*(term**0.8))
             if bd>1: bd=1.0
             r=sol[0]/(bd*-0.002); fc2=0 if r<0 else -bd*props['fc_prime']*(2*r-r**2)
-            vci=3.83*(props['fc_prime']**(1/3))*(sol[1]**2/((w/s_cr)**2+sol[1]**2))
+            vci=3.83*(props['fc_prime']**(1/3))*(sol[1]**2/((w/spacing)**2+sol[1]**2))
             tau=(fc1-fc2)*sc+vci*(s2-c2)
-            
-            tau_model.append(tau)
+            res_tau.append(tau)
             curr = sol
         else:
-            tau_model.append(np.nan)
-        
-        if i % (max(1, total_steps // 20)) == 0:
-            progress_bar.progress((i+1)/total_steps)
-    
-    progress_bar.progress(100)
-    status_text.text(f"Calculation Complete! ({total_steps} points)")
-    
-    # Process Results
-    tau_model = np.array(tau_model)
-    tau_u = np.nanmax(tau_model)
-    degradation = (1 - (tau_model/tau_u))*100
-    
-    # --- C. Plotting & Display ---
-    st.divider()
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Plot Graph
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(w_range, degradation, color='#d62728', linewidth=2, label=f'Model (Scr={s_cr:.1f}mm)')
-        if has_exp_data:
-            ax.plot(w_exp, loss_exp, 'ro', markersize=8, markeredgecolor='k', label='User Data (Loss)')
-        
-        ax.set_xlabel('Max Diagonal Crack Width, w_cr (mm)', fontweight='bold')
-        ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold')
-        ax.set_title(f'Shear Degradation Curve', fontsize=14)
-        ax.set_xlim(0, w_end) 
-        ax.set_ylim(0, 100)
-        ax.grid(True, linestyle='--', alpha=0.5)
-        ax.legend()
-        st.pyplot(fig)
-        
-    with col2:
-        st.subheader("📊 Result Summary")
-        st.metric("Max Shear Strength (Tau_u)", f"{tau_u:.2f} MPa")
-        st.metric("Crack Spacing Used", f"{s_cr:.1f} mm")
-        st.metric("Analysis Points", f"{total_steps} steps")
-        
-        if uploaded_file is not None:
-            st.write("---")
-            st.markdown("**Cross-Section View:**")
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Section", use_container_width=True)
-        else:
-            st.info("No section image uploaded.")
+            res_tau.append(np.nan)
+    return np.array(res_tau)
 
-        if has_exp_data:
-            with st.expander("Data View"):
-                st.dataframe(edited_df, hide_index=True)
+# ==========================================
+# 3. MAIN APP EXECUTION
+# ==========================================
+if st.button("🚀 Run Analysis", type="primary"):
+    
+    w_range = np.arange(0.001, w_end + (w_step/100), w_step)
+    
+    # 1. Run Main Analysis (Main Angle)
+    with st.spinner(f"Analyzing for {theta_deg}°..."):
+        tau_main = run_simulation(theta_deg, w_range, s_cr)
+    
+    # 2. Run Comparison Analyses (if checked)
+    results_dict = {f"{theta_deg}° (Main)": tau_main}
+    
+    if compare_angles:
+        ang_low = theta_deg - delta_deg
+        ang_high = theta_deg + delta_deg
+        
+        # Recalculate Scr for different angles if "Calculate" method is used
+        # (Because spacing changes with angle in theory, but here we keep user input or recalculate?)
+        # For simplicity in "Manual Mode", we keep s_cr constant.
+        # For "Calculate Mode", we should technically update s_cr.
+        # Let's keep s_cr constant for fair comparison of "Angle Effect Only" unless refined.
+        
+        with st.spinner(f"Analyzing for {ang_low}° and {ang_high}°..."):
+            tau_low = run_simulation(ang_low, w_range, s_cr)
+            tau_high = run_simulation(ang_high, w_range, s_cr)
+            
+        results_dict[f"{ang_low}° (-{delta_deg})"] = tau_low
+        results_dict[f"{ang_high}° (+{delta_deg})"] = tau_high
+
+    # Process Main Result for Metrics
+    tau_u = np.nanmax(tau_main)
+    
+    # --- PLOTTING ---
+    st.divider()
+    col_plot, col_info = st.columns([3, 1])
+    
+    with col_plot:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Color palette
+        colors = ['#d62728', '#1f77b4', '#2ca02c'] # Red, Blue, Green
+        styles = ['-', '--', '--']
+        widths = [2.5, 1.5, 1.5]
+        
+        # Plot all curves
+        for i, (label, tau_vals) in enumerate(results_dict.items()):
+            deg_curve = (1 - (tau_vals/np.nanmax(tau_vals)))*100 # Normalize to ITS OWN max? Or global max?
+            # Usually we plot Absolute Shear Strength or Degradation relative to the MAIN model.
+            # Let's plot ABSOLUTE SHEAR STRENGTH first (Clearer)
+            # OR Degradation % relative to the max of that specific angle.
+            
+            # Let's Plot Shear Strength (MPa) - It's more informative for comparison
+            ax.plot(w_range, tau_vals, label=label, color=colors[i%3], linestyle=styles[i%3], linewidth=widths[i%3])
+
+        # Plot User Data (Scaled to Shear Strength if possible, but user data is usually Loss %)
+        # If User Data is Loss %, we need a secondary axis or plot Loss % graph.
+        # Let's switch to plotting LOSS (%) to match previous context perfectly.
+        
+        ax.clear() # Reset to plot Loss (%)
+        for i, (label, tau_vals) in enumerate(results_dict.items()):
+            # Calculate degradation based on THAT curve's max (Internal degradation)
+            local_max = np.nanmax(tau_vals)
+            degradation = (1 - (tau_vals/local_max))*100
+            ax.plot(w_range, degradation, label=f"{label} (Max $\\tau$={local_max:.2f})", 
+                   color=colors[i%3], linestyle=styles[i%3], linewidth=widths[i%3])
+            
+        # Plot Experimental Data points
+        if not edited_df.empty:
+             ax.plot(edited_df["Width"], edited_df["Loss"], 'ko', markersize=8, label='Exp. Data')
+
+        ax.set_xlabel('Crack Width (mm)', fontweight='bold', fontsize=12)
+        ax.set_ylabel('Shear Strength Degradation (%)', fontweight='bold', fontsize=12)
+        ax.set_title('Impact of Crack Angle on Shear Degradation', fontsize=14)
+        ax.set_xlim(0, w_end)
+        ax.set_ylim(0, 100)
+        ax.grid(True, which='both', linestyle='--', alpha=0.5)
+        ax.legend(fontsize=10)
+        
+        st.pyplot(fig)
+        st.caption(f"💡 Note: Solid Red Line is your main input ({theta_deg}°). Dashed lines are for comparison.")
+
+    with col_info:
+        st.subheader("📊 Analysis Results")
+        st.metric("Max Strength (Main)", f"{tau_u:.2f} MPa")
+        st.markdown(f"**At {theta_deg}°:**")
+        st.write(f"- $s_{{cr}}$ used: {s_cr:.1f} mm")
+        st.write(f"- Steps analyzed: {len(w_range)}")
+        
+        if compare_angles:
+            st.markdown("---")
+            st.markdown("**Comparison:**")
+            st.write(f"🔹 {ang_low}° Max: **{np.nanmax(tau_low):.2f} MPa**")
+            st.write(f"🟢 {ang_high}° Max: **{np.nanmax(tau_high):.2f} MPa**")
 
 else:
-    st.info("👈 Adjust parameters, (Optionally upload image), and click **Run Analysis**")
+    st.info("👈 Set parameters and click **Run Analysis** to see the comparison.")
